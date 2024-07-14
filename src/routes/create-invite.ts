@@ -11,55 +11,37 @@ import { env } from "../env";
 
 
 
-export async function createTrip(app: FastifyInstance) {
+export async function createInvite(app: FastifyInstance) {
 
-  app.withTypeProvider<ZodTypeProvider>().post('/trips', {
+  app.withTypeProvider<ZodTypeProvider>().post('/trips/:tripId/invites', {
     schema: {
+      params: z.object({
+        tripId: z.string().uuid()
+      }),
       body: z.object({
-        destination: z.string().min(4),
-        startsAt: z.coerce.date(),
-        endsAt: z.coerce.date(),
-        ownerName: z.string(),
-        ownerEmail: z.string().email(),
-        emailsToInvite: z.array(z.string().email())
+        email: z.string().email()
       })
     }
   }, async (request, reply) => {
-    const { destination, endsAt, startsAt, ownerEmail, ownerName, emailsToInvite } = request.body
+    const {tripId} = request.params
+    const { email } = request.body
 
-    if (dayjs(startsAt).isBefore(new Date)) {
-      throw new ClientError('Invalid trip start date')
-    }
+    const trip = await prisma.trip.findUnique({
+      where: {id: tripId}
+    })
 
-    if (dayjs(endsAt).isBefore(startsAt)) {
-      throw new ClientError('Invalid trip end date')
-    }
+    if(!trip) throw new ClientError('Trip not found')
 
-    const trip = await prisma.trip.create({
+    const participant = await prisma.participant.create({
       data: {
-        destination,
-        endsAt,
-        startsAt,
-        Participant: {
-          createMany: {
-            data: [
-              {
-                email: ownerEmail,
-                name: ownerName,
-                isOwner: true,
-                isConfirmed: true
-              },
-              ...emailsToInvite.map(email => {
-                return { email }
-              })
-            ]
-          }
-        }
+        email,
+        tripId
       }
     })
 
-    const startFormated = dayjs(startsAt).format('LL')
-    const endsFormated = dayjs(endsAt).format('LL')
+
+    const startFormated = dayjs(trip.startsAt).format('LL')
+    const endsFormated = dayjs(trip.endsAt).format('LL')
 
     const confirm = `${env.API_BASE_URL}/trips/${trip.id}/confirm`
 
@@ -70,11 +52,8 @@ export async function createTrip(app: FastifyInstance) {
         name: 'Equipe plann.er',
         address: 'oi@plan.er',
       },
-      to: {
-        name: ownerName,
-        address: ownerEmail,
-      },
-      subject: `Confirme sua viagem para ${destination} em ${startFormated}`,
+      to: participant.email,
+      subject: `Confirme sua viagem para ${trip.destination} em ${startFormated}`,
       html: `
         <!DOCTYPE html>
         <html lang="pt-br">
@@ -94,10 +73,9 @@ export async function createTrip(app: FastifyInstance) {
                   <tr>
                     <td>
                       <h2 style="color: #4CAF50;">Confirmação do Pedido de Viagem</h2>
-                      <p>Olá <strong>${ownerName}</strong>,</p>
                       <p>Recebemos seu pedido de viagem com os seguintes detalhes:</p>
                       <ul>
-                        <li><strong>Destino:</strong> ${destination}</li>
+                        <li><strong>Destino:</strong> ${trip.destination}</li>
                         <li><strong>Data de Partida:</strong> ${startFormated}</li>
                         <li><strong>Data de Retorno:</strong> ${endsFormated}</li>
                       </ul>
